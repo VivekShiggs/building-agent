@@ -1,1 +1,1 @@
-building-agent[web]
+-e .[web]
