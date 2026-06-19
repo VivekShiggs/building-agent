@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "building-agent"
+version = "1.0.0"
+description = "AI-powered autonomous building detection, classification, and data collection agent"
+authors = [
+    {name = "Building Agent Team"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "ultralytics>=8.0.0",
+    "rasterio>=1.3.0",
+    "geopandas>=0.14.0",
+    "shapely>=2.0.0",
+    "folium>=0.15.0",
+    "requests>=2.31.0",
+    "Pillow>=10.0.0",
+    "pyproj>=3.6.0",
+    "matplotlib>=3.7.0",
+    "numpy>=1.24.0,<2.0.0",
+    "opencv-python-headless>=4.8.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "streamlit>=1.28.0",
+    "streamlit-folium>=0.15.0",
+]
+sheets = [
+    "gspread>=6.0.0",
+    "google-auth>=2.0.0",
+]
+notebook = [
+    "jupyter>=1.0.0",
+    "ipython>=8.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+]
+all = [
+    "building-agent[web,sheets,notebook,dev]",
+]
+
+[tool.setuptools.packages.find]
+include = ["agent*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true
