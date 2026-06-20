@@ -103,7 +103,12 @@ class BuildingStore:
     def _init_db(self) -> None:
         """Initialize database schema if needed."""
         conn = self._get_conn()
-        conn.executescript(CREATE_TABLES)
+        try:
+            conn.executescript(CREATE_TABLES)
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            self._recover_db()
+            conn = self._get_conn()
+            conn.executescript(CREATE_TABLES)
 
         cur = conn.execute("SELECT MAX(version) FROM schema_version")
         row = cur.fetchone()
@@ -112,26 +117,37 @@ class BuildingStore:
             conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
         conn.commit()
 
+    def _recover_db(self) -> None:
+        """Remove stale journal files to recover from a crash."""
+        self._local.conn = None
+        for f in (
+            self._path,
+            self._path.with_suffix(self._path.suffix + "-wal"),
+            self._path.with_suffix(self._path.suffix + "-shm"),
+        ):
+            f.unlink(missing_ok=True)
+
     def _get_conn(self) -> sqlite3.Connection:
         """Get or create a per-thread database connection."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            try:
-                self._local.conn = sqlite3.connect(str(self._path))
-                self._local.conn.row_factory = sqlite3.Row
-                self._local.conn.execute("PRAGMA journal_mode=WAL")
-                self._local.conn.execute("PRAGMA foreign_keys=ON")
-            except sqlite3.OperationalError:
-                for f in (
-                    self._path,
-                    self._path.with_suffix(self._path.suffix + "-wal"),
-                    self._path.with_suffix(self._path.suffix + "-shm"),
-                ):
-                    f.unlink(missing_ok=True)
-                self._local.conn = sqlite3.connect(str(self._path))
-                self._local.conn.row_factory = sqlite3.Row
-                self._local.conn.execute("PRAGMA journal_mode=WAL")
-                self._local.conn.execute("PRAGMA foreign_keys=ON")
+            self._local.conn = self._connect()
         return self._local.conn
+
+    def _connect(self) -> sqlite3.Connection:
+        """Create a new database connection with error recovery."""
+        try:
+            conn = sqlite3.connect(str(self._path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            return conn
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            self._recover_db()
+            conn = sqlite3.connect(str(self._path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            return conn
 
     def close(self) -> None:
         """Close database connection for the current thread."""
@@ -215,7 +231,7 @@ class BuildingStore:
     # ── Building operations ─────────────────────────────────────────────
 
     def save_building(self, record: BuildingRecord, scan_id: str) -> str:
-        """Save a building record.
+        """Save a single building record.
 
         Args:
             record: BuildingRecord to save
@@ -224,6 +240,28 @@ class BuildingStore:
         Returns:
             building_id
         """
+        return self._insert_building(record, scan_id)
+
+    def save_buildings(
+        self, records: List[BuildingRecord], scan_id: str
+    ) -> List[str]:
+        """Save multiple building records in a single transaction."""
+        ids: List[str] = []
+        conn = self._get_conn()
+
+        for record in records:
+            if not record.building_id:
+                record.building_id = f"bld_{uuid.uuid4().hex[:12]}"
+            ids.append(record.building_id)
+
+        for record in records:
+            self._insert_building(record, scan_id)
+
+        conn.commit()
+        return ids
+
+    def _insert_building(self, record: BuildingRecord, scan_id: str) -> str:
+        """Insert a single building record (no commit)."""
         if not record.building_id:
             record.building_id = f"bld_{uuid.uuid4().hex[:12]}"
 
@@ -270,31 +308,7 @@ class BuildingStore:
                 record.geometry_geojson,
             ),
         )
-        conn.commit()
         return record.building_id
-
-    def save_buildings(
-        self, records: List[BuildingRecord], scan_id: str
-    ) -> List[str]:
-        """Save multiple building records in a transaction."""
-        ids: List[str] = []
-        conn = self._get_conn()
-
-        try:
-            for record in records:
-                if not record.building_id:
-                    record.building_id = f"bld_{uuid.uuid4().hex[:12]}"
-                ids.append(record.building_id)
-
-            conn.execute("BEGIN")
-            for record in records:
-                self.save_building(record, scan_id)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-
-        return ids
 
     def get_buildings_by_scan(self, scan_id: str) -> List[BuildingRecord]:
         """Get all buildings for a scan."""
