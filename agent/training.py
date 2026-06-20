@@ -84,7 +84,7 @@ def export_yolo_labels(
         for idx in subset_ids:
             row = df.loc[idx]
             building_id = row.get("building_id", f"bld_{idx}")
-            img_data = self._make_placeholder_image()
+            img_data = _make_placeholder_image()
 
             img_path = img_dir / subset_name / f"{building_id}.jpg"
             lbl_path = lbl_dir / subset_name / f"{building_id}.txt"
