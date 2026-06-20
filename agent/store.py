@@ -10,6 +10,7 @@ Security:
 import json
 import logging
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -96,7 +97,7 @@ class BuildingStore:
     def __init__(self, database_path: str):
         self._path = Path(database_path).resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: Optional[sqlite3.Connection] = None
+        self._local = threading.local()
         self._init_db()
 
     def _init_db(self) -> None:
@@ -112,13 +113,13 @@ class BuildingStore:
         conn.commit()
 
     def _get_conn(self) -> sqlite3.Connection:
-        """Get or create database connection with row factory."""
-        if self._conn is None:
+        """Get or create a per-thread database connection."""
+        if not hasattr(self._local, "conn") or self._local.conn is None:
             try:
-                self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
-                self._conn.row_factory = sqlite3.Row
-                self._conn.execute("PRAGMA journal_mode=WAL")
-                self._conn.execute("PRAGMA foreign_keys=ON")
+                self._local.conn = sqlite3.connect(str(self._path))
+                self._local.conn.row_factory = sqlite3.Row
+                self._local.conn.execute("PRAGMA journal_mode=WAL")
+                self._local.conn.execute("PRAGMA foreign_keys=ON")
             except sqlite3.OperationalError:
                 for f in (
                     self._path,
@@ -126,17 +127,17 @@ class BuildingStore:
                     self._path.with_suffix(self._path.suffix + "-shm"),
                 ):
                     f.unlink(missing_ok=True)
-                self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
-                self._conn.row_factory = sqlite3.Row
-                self._conn.execute("PRAGMA journal_mode=WAL")
-                self._conn.execute("PRAGMA foreign_keys=ON")
-        return self._conn
+                self._local.conn = sqlite3.connect(str(self._path))
+                self._local.conn.row_factory = sqlite3.Row
+                self._local.conn.execute("PRAGMA journal_mode=WAL")
+                self._local.conn.execute("PRAGMA foreign_keys=ON")
+        return self._local.conn
 
     def close(self) -> None:
-        """Close database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        """Close database connection for the current thread."""
+        if hasattr(self._local, "conn") and self._local.conn:
+            self._local.conn.close()
+            self._local.conn = None
 
     # ── Scan operations ────────────────────────────────────────────────
 
