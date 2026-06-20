@@ -14,7 +14,6 @@ readme = "README.md"
 requires-python = ">=3.9"
 
 dependencies = [
-    "ultralytics>=8.0.0",
     "rasterio>=1.3.0",
     "geopandas>=0.14.0",
     "shapely>=2.0.0",
@@ -37,6 +36,9 @@ web = [
     "streamlit>=1.28.0",
     "streamlit-folium>=0.15.0",
 ]
+gpu = [
+    "ultralytics>=8.0.0",
+]
 sheets = [
     "gspread>=6.0.0",
     "google-auth>=2.0.0",
@@ -51,7 +53,7 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "building-agent[web,sheets,notebook,dev]",
+    "building-agent[web,gpu,sheets,notebook,dev]",
 ]
 
 [tool.setuptools.packages.find]
