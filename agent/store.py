@@ -115,7 +115,7 @@ class BuildingStore:
         """Get or create database connection with row factory."""
         if self._conn is None:
             try:
-                self._conn = sqlite3.connect(str(self._path))
+                self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
                 self._conn.row_factory = sqlite3.Row
                 self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA foreign_keys=ON")
@@ -126,7 +126,7 @@ class BuildingStore:
                     self._path.with_suffix(self._path.suffix + "-shm"),
                 ):
                     f.unlink(missing_ok=True)
-                self._conn = sqlite3.connect(str(self._path))
+                self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
                 self._conn.row_factory = sqlite3.Row
                 self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA foreign_keys=ON")
