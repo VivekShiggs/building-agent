@@ -265,6 +265,7 @@ class BuildingPipeline:
         Returns:
             (gdf_buildings, gdf_parcels)
         """
+        west, south, east, north = bbox
         result = self._overpass_query(bbox, "buildings")
         gdf_buildings = self._parse_overpass_result(result)
 
@@ -324,11 +325,17 @@ class BuildingPipeline:
                     },
                     timeout=60,
                 )
+                if resp.status_code == 429:
+                    wait = (attempt + 1) * 5.0
+                    logger.warning("Overpass rate limited, retrying %s in %.0fs...", query_type, wait)
+                    import time
+                    time.sleep(wait)
+                    continue
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
-                if attempt == 0 and "504" in str(e):
-                    logger.warning("Overpass timeout, retrying %s...", query_type)
+                if attempt == 0:
+                    logger.warning("Overpass %s failed, retrying: %s", query_type, e)
                     continue
                 logger.warning("Overpass query failed (%s): %s", query_type, e)
                 return {"elements": []}

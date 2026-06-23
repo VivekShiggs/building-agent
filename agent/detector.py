@@ -23,6 +23,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+_yolo_warned = False
+
 NON_STRUCTURAL_CLASSES = {
     0, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
 }
@@ -61,10 +63,13 @@ def run_yolo_inference(
 
     Returns empty list if no detections or model unavailable.
     """
+    global _yolo_warned
     try:
         from ultralytics import YOLO
     except Exception as e:
-        logger.warning("Ultralytics not available on this system: %s", e)
+        if not _yolo_warned:
+            logger.warning("Ultralytics not available on this system: %s", e)
+            _yolo_warned = True
         return []
 
     model = _load_yolo_model(config_model.name, config_model.finetuned_path)

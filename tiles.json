@@ -1,0 +1,65 @@
+[
+  {
+    "tile_id": "tile_r00c00",
+    "west": 17.5644,
+    "south": 48.3723,
+    "east": 17.5906,
+    "north": 48.3877
+  },
+  {
+    "tile_id": "tile_r00c01",
+    "west": 17.5906,
+    "south": 48.3723,
+    "east": 17.6168,
+    "north": 48.3877
+  },
+  {
+    "tile_id": "tile_r00c02",
+    "west": 17.6168,
+    "south": 48.3723,
+    "east": 17.643,
+    "north": 48.3877
+  },
+  {
+    "tile_id": "tile_r01c00",
+    "west": 17.5644,
+    "south": 48.3877,
+    "east": 17.5906,
+    "north": 48.4031
+  },
+  {
+    "tile_id": "tile_r01c01",
+    "west": 17.5906,
+    "south": 48.3877,
+    "east": 17.6168,
+    "north": 48.4031
+  },
+  {
+    "tile_id": "tile_r01c02",
+    "west": 17.6168,
+    "south": 48.3877,
+    "east": 17.643,
+    "north": 48.4031
+  },
+  {
+    "tile_id": "tile_r02c00",
+    "west": 17.5644,
+    "south": 48.4031,
+    "east": 17.5906,
+    "north": 48.4185
+  },
+  {
+    "tile_id": "tile_r02c01",
+    "west": 17.5906,
+    "south": 48.4031,
+    "east": 17.6168,
+    "north": 48.4185
+  },
+  {
+    "tile_id": "tile_r02c02",
+    "west": 17.6168,
+    "south": 48.4031,
+    "east": 17.643,
+    "north": 48.4185
+  }
+]
