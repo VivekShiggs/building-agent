@@ -178,6 +178,15 @@ def export_google_sheets(
         logger.info("Google Sheets synced: %s (%d rows)", url, len(df))
         return url
 
+    except ImportError as e:
+        logger.error("Google Sheets sync failed — missing dependency: %s", e)
+        return None
     except Exception as e:
-        logger.error("Google Sheets sync failed: %s", e)
+        msg = str(e)
+        if "not found" in msg.lower() or "notfound" in msg.lower():
+            logger.error("Google Sheet not found — check GOOGLE_SHEET_ID: %s", e)
+        elif "credentials" in msg.lower() or "auth" in msg.lower() or "unauthorized" in msg.lower():
+            logger.error("Google Sheets auth failed — check GOOGLE_SHEETS_CREDENTIALS: %s", e)
+        else:
+            logger.error("Google Sheets sync failed: %s", e)
         return None

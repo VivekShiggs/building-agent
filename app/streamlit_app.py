@@ -67,17 +67,6 @@ if "map_center" not in st.session_state:
     st.session_state.map_center = [(b[1] + b[3]) / 2, (b[0] + b[2]) / 2]
 
 
-def run_scan(bbox: List[float]) -> str:
-    """Run building detection scan and return scan_id."""
-    from agent.pipeline import BuildingPipeline
-
-    config = load_config()
-    store = st.session_state.store
-    pipeline = BuildingPipeline(config, store)
-    scan_id = pipeline.run_scan(bbox=bbox)
-    return scan_id
-
-
 # ── Sidebar ───────────────────────────────────────────────────────────
 st.sidebar.title("🏙️ City Audit AI")
 st.sidebar.markdown("Sustainable city analytics — detect, classify, recommend")
@@ -231,132 +220,186 @@ elif page == "City Audit":
 
 # ── Scan Tab ──────────────────────────────────────────────────────────
 elif page == "Scan":
-    st.title("🔍 Choose Your Location")
+    st.title("🔍 Scan a Slovak City")
 
-    st.markdown("""
-    **Draw a rectangle** on the map below to select your area of interest,  
-    or manually enter coordinates.
-    """)
+    from agent.geocode import list_cities, lookup_city
 
     default_bbox = st.session_state.config.area.bbox_wgs84
-    west, south, east, north = default_bbox
 
-    # ── Coordinate inputs (collapsible) ────────────────────────────────
-    with st.expander("✏️ Manual coordinate input", expanded=False):
-        col1, col2 = st.columns(2)
+    # ── Input mode toggle ──────────────────────────────────────────────
+    input_mode = st.radio(
+        "Input mode",
+        ["🏙️ Select city", "✏️ Manual coordinates"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    bbox = None
+    region_name: Optional[str] = None
+
+    # ── City mode ──────────────────────────────────────────────────────
+    if "Select city" in input_mode:
+        col1, col2 = st.columns([3, 1])
         with col1:
-            west_in = st.number_input("West longitude", value=west, format="%.4f", key="w")
-            south_in = st.number_input("South latitude", value=south, format="%.4f", key="s")
+            cities = list_cities()
+            default_idx = cities.index("Trnava") if "Trnava" in cities else 0
+            city = st.selectbox("City", cities, index=default_idx)
         with col2:
-            east_in = st.number_input("East longitude", value=east, format="%.4f", key="e")
-            north_in = st.number_input("North latitude", value=north, format="%.4f", key="n")
+            presets = st.selectbox("Preset size", ["Full city", "City centre", "District"], index=0)
+            preset_factors = {"Full city": 1.0, "City centre": 0.5, "District": 0.2}
 
-        if st.button("📌 Set from coordinates", type="secondary"):
-            if west_in < east_in and south_in < north_in:
-                st.session_state.drawn_bbox = [west_in, south_in, east_in, north_in]
-                center_lat = (south_in + north_in) / 2
-                center_lon = (west_in + east_in) / 2
-                st.session_state.map_center = [center_lat, center_lon]
-                st.rerun()
+        city_bbox = lookup_city(city)
+        if city_bbox:
+            factor = preset_factors.get(presets, 1.0)
+            if factor < 1.0:
+                cx = (city_bbox[0] + city_bbox[2]) / 2
+                cy = (city_bbox[1] + city_bbox[3]) / 2
+                hw = (city_bbox[2] - city_bbox[0]) * factor / 2
+                hh = (city_bbox[3] - city_bbox[1]) * factor / 2
+                bbox = [cx - hw, cy - hh, cx + hw, cy + hh]
             else:
-                st.error("Invalid bounds: west < east and south < north required")
+                bbox = list(city_bbox)
 
-    # ── Interactive Map ────────────────────────────────────────────────
-    st.subheader("🗺️ Draw your AOI on the map")
+            region_name = city
 
-    if st.session_state.drawn_bbox:
-        db = st.session_state.drawn_bbox
-        current_bbox = db
-    else:
-        current_bbox = default_bbox
+            st.success(
+                f"✅ **{city}**  –  "
+                f"[{bbox[0]:.4f}, {bbox[1]:.4f}, {bbox[2]:.4f}, {bbox[3]:.4f}]"
+            )
 
+            if st.button("📌 Apply city bounds", type="secondary", use_container_width=True):
+                st.session_state.drawn_bbox = bbox
+                st.session_state.map_center = [(bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2]
+                st.rerun()
+
+    # ── Manual coordinate mode ─────────────────────────────────────────
+    if "Manual coordinates" in input_mode:
+        with st.container():
+            col1, col2 = st.columns(2)
+            with col1:
+                w_in = st.number_input("West", value=default_bbox[0], format="%.4f", key="scan_w")
+                s_in = st.number_input("South", value=default_bbox[1], format="%.4f", key="scan_s")
+            with col2:
+                e_in = st.number_input("East", value=default_bbox[2], format="%.4f", key="scan_e")
+                n_in = st.number_input("North", value=default_bbox[3], format="%.4f", key="scan_n")
+
+            if st.button("📌 Set from coordinates", type="secondary", use_container_width=True):
+                if w_in < e_in and s_in < n_in:
+                    st.session_state.drawn_bbox = [w_in, s_in, e_in, n_in]
+                    st.session_state.map_center = [(s_in + n_in) / 2, (w_in + e_in) / 2]
+                    st.rerun()
+                else:
+                    st.error("Invalid bounds: west < east and south < north required")
+
+            if bbox is None:
+                bbox = [w_in, s_in, e_in, n_in]
+                region_name = None
+
+    # ── Resolve final bounding box ──────────────────────────────────────
+    if bbox is None:
+        bbox = st.session_state.drawn_bbox if st.session_state.drawn_bbox else default_bbox
+        region_name = None
+
+    # ── Scan resolution ────────────────────────────────────────────────
+    st.subheader("⚙️ Scan resolution")
+    res_option = st.select_slider(
+        "Tile count",
+        options=["Coarse (~10)", "Standard (~25)", "Detailed (~50)"],
+        value="Standard (~25)",
+        label_visibility="visible",
+    )
+    target_map = {"Coarse (~10)": 10, "Standard (~25)": 25, "Detailed (~50)": 50}
+    target_tiles = target_map[res_option]
+
+    w = max(bbox[2] - bbox[0], 0.0001)
+    h = max(bbox[3] - bbox[1], 0.0001)
+    ratio = w / h
+    n_cols = max(1, int(round((ratio * target_tiles) ** 0.5)))
+    n_rows = max(1, int(round(target_tiles / n_cols)))
+    tile_w = w / n_cols
+    tile_h = h / n_rows
+    actual_tiles = n_cols * n_rows
+    est_min = actual_tiles * 1
+    est_max = actual_tiles * 4
+
+    st.caption(
+        f"Grid: {n_cols}×{n_rows} = **{actual_tiles} tiles**  |  "
+        f"Tile: {tile_w:.4f}°×{tile_h:.4f}°  |  "
+        f"Est: {est_min}–{est_max} min"
+    )
+
+    # ── Map with AOI + tile grid ───────────────────────────────────────
+    st.subheader("🗺️ Area preview")
     center = st.session_state.map_center
-    m = folium.Map(location=center, zoom_start=15, tiles="OpenStreetMap")
+    m = folium.Map(location=center, zoom_start=13, tiles="OpenStreetMap")
 
-    # Draw the current AOI rectangle
     folium.Rectangle(
-        bounds=[[current_bbox[1], current_bbox[0]], [current_bbox[3], current_bbox[2]]],
+        bounds=[[bbox[1], bbox[0]], [bbox[3], bbox[2]]],
         color="#ff4444",
         weight=3,
         fill=True,
-        fill_opacity=0.15,
+        fill_opacity=0.05,
         tooltip="AOI",
-        popup=f"AOI: {current_bbox}",
+        popup=f"AOI: {bbox}",
     ).add_to(m)
 
-    # Add a tile layer selector
+    grid_color = "#ffaa00"
+    for row in range(n_rows + 1):
+        lat = bbox[1] + row * tile_h
+        folium.PolyLine(
+            [[lat, bbox[0]], [lat, bbox[2]]],
+            color=grid_color, weight=1, opacity=0.4,
+        ).add_to(m)
+    for col in range(n_cols + 1):
+        lon = bbox[0] + col * tile_w
+        folium.PolyLine(
+            [[bbox[1], lon], [bbox[3], lon]],
+            color=grid_color, weight=1, opacity=0.4,
+        ).add_to(m)
+
     folium.TileLayer("Esri.WorldImagery", name="Satellite", attr="Esri").add_to(m)
     folium.LayerControl(collapsed=True).add_to(m)
 
-    # Render the map and capture interactions
-    if HAS_FOLIUM_COMPONENT:
-        map_data = st_folium(
-            m,
-            width=None,
-            height=500,
-            key="scan_map",
-            returned_objects=["last_active_drawing", "last_bounds", "center", "zoom"],
-        )
-
-        # Detect rectangle drawn on map
-        if map_data and map_data.get("last_active_drawing"):
-            drawing = map_data["last_active_drawing"]
-            if drawing["geometry"]["type"] == "Polygon":
-                coords = drawing["geometry"]["coordinates"][0]
-                lons = [c[0] for c in coords]
-                lats = [c[1] for c in coords]
-                drawn_bbox = [min(lons), min(lats), max(lons), max(lats)]
-                st.session_state.drawn_bbox = drawn_bbox
-                st.session_state.map_center = [
-                    (drawn_bbox[1] + drawn_bbox[3]) / 2,
-                    (drawn_bbox[0] + drawn_bbox[2]) / 2,
-                ]
-                st.rerun()
-
-        # Handle map click for center
-        if map_data and map_data.get("last_bounds"):
-            st.session_state.map_center = [
-                (map_data["last_bounds"][0][0] + map_data["last_bounds"][1][0]) / 2,
-                (map_data["last_bounds"][0][1] + map_data["last_bounds"][1][1]) / 2,
-            ]
-    else:
-        st.warning("Install streamlit-folium for interactive map drawing: `pip install streamlit-folium`")
-        st.components.v1.html(m._repr_html_(), height=400)
-
-    # ── Show selected coordinates ──────────────────────────────────────
-    if st.session_state.drawn_bbox:
-        db = st.session_state.drawn_bbox
-        st.success(f"✅ **Selected area:** West `{db[0]:.4f}`  South `{db[1]:.4f}`  East `{db[2]:.4f}`  North `{db[3]:.4f}`")
-        area_deg = (db[2] - db[0]) * (db[3] - db[1])
-        area_approx_km2 = area_deg * 111 * 111  # rough: 1° ≈ 111km
-        st.caption(f"Area: ~{area_approx_km2:.2f} km²  |  Tiles: ~{max(1, int((db[2]-db[0])/0.005)) * max(1, int((db[3]-db[1])/0.005))}")
-    else:
-        db = default_bbox
-        st.info(f"Current AOI: West {db[0]}  South {db[1]}  East {db[2]}  North {db[3]}")
+    st.components.v1.html(m._repr_html_(), height=450)
 
     # ── Scan button ────────────────────────────────────────────────────
     col1, col2 = st.columns([3, 1])
     with col1:
-        if st.button("🚀 Start Scan", type="primary", width="stretch"):
-            bbox_to_scan = st.session_state.drawn_bbox if st.session_state.drawn_bbox else default_bbox
-
-            if bbox_to_scan[0] >= bbox_to_scan[2] or bbox_to_scan[1] >= bbox_to_scan[3]:
-                st.error("Invalid bbox: west < east and south < north required")
-            else:
-                with st.spinner(f"🔍 Scanning {bbox_to_scan}...\n\nThis downloads imagery, runs AI detection, and audits against OSM records. May take 5-15 minutes."):
-                    try:
-                        scan_id = run_scan(bbox_to_scan)
-                        st.session_state.scan_id = scan_id
-                        st.session_state.drawn_bbox = None
-                        st.balloons()
-                        st.success(f"✅ Scan complete! ID: `{scan_id}`")
-                        st.page_link("app/streamlit_app.py?page=Results", label="📋 View Results →")
-                    except Exception as e:
-                        st.error(f"Scan failed: {e}")
+        start_scan = st.button("🚀 Start City Scan", type="primary", use_container_width=True)
     with col2:
-        if st.button("🗑️ Clear selection"):
+        if st.button("🗑️ Clear"):
             st.session_state.drawn_bbox = None
             st.rerun()
+
+    if start_scan:
+        if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
+            st.error("Invalid bbox: west < east and south < north required")
+        else:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            def on_progress(tile_id: str, status: str, n_bld: int, done: int, total: int) -> None:
+                progress_bar.progress(done / total)
+                icon = "✅" if status == "done" else "❌"
+                bld_info = f" — {n_bld} buildings" if n_bld else ""
+                status_text.markdown(f"**{icon} {done}/{total}**  `{tile_id}`{bld_info}")
+
+            from agent.pipeline import BuildingPipeline
+            pipeline = BuildingPipeline(st.session_state.config, st.session_state.store)
+            with st.spinner("Scanning city — this may take several minutes..."):
+                try:
+                    scan_id = pipeline.run_scan(
+                        bbox=bbox,
+                        region_name=region_name,
+                        tile_size_deg=tile_w,
+                        progress_callback=on_progress,
+                    )
+                    st.session_state.scan_id = scan_id
+                    st.session_state.drawn_bbox = None
+                    st.balloons()
+                    st.success(f"✅ City scan complete! ID: `{scan_id}`")
+                except Exception as e:
+                    st.error(f"Scan failed: {e}")
 
 # ── Results Tab ───────────────────────────────────────────────────────
 elif page == "Results":

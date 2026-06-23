@@ -147,6 +147,7 @@ class ScanRecord(BaseModel):
 
     scan_id: str
     bbox: List[float]
+    region_name: Optional[str] = Field(default=None, description="City or region name for export filenames")
     started_at: str
     completed_at: Optional[str] = None
     n_tiles: int = 0

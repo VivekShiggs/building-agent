@@ -24,12 +24,16 @@ SOLAR_MIN_M2 = 500
 FARM_MIN_M2 = 200
 
 
+DEFAULT_MIN_REC_SCORE = 0.3
+
+
 def generate_recommendations(
     buildings: List[BuildingRecord],
     land_patches: List[LandPatch],
     scan_id: str,
     solar_min_m2: float = SOLAR_MIN_M2,
     farm_min_m2: float = FARM_MIN_M2,
+    min_rec_score: float = DEFAULT_MIN_REC_SCORE,
 ) -> List[Recommendation]:
     """Generate ranked recommendations from building + land use data.
 
@@ -45,6 +49,7 @@ def generate_recommendations(
         scan_id: Associated scan ID
         solar_min_m2: Minimum patch area for solar consideration
         farm_min_m2: Minimum patch area for farming consideration
+        min_rec_score: Minimum score threshold for recommendations
 
     Returns:
         List of Recommendation sorted by score descending
@@ -91,7 +96,7 @@ def generate_recommendations(
         # Solar farm
         if patch.area_m2 >= solar_min_m2:
             solar_score = score_patch_for_solar(patch)
-            if solar_score > 0.3:
+            if solar_score > min_rec_score:
                 _, annual_kwh, co2_tons = estimate_open_land_solar(
                     [patch], usage_ratio=0.5
                 )
@@ -119,7 +124,7 @@ def generate_recommendations(
         # Farming
         if patch.area_m2 >= farm_min_m2:
             farm_score = score_patch_for_farming(patch)
-            if farm_score > 0.3:
+            if farm_score > min_rec_score:
                 farm_type = classify_farm_type(patch.area_m2)
                 yield_tons = estimate_crop_yield(patch.area_m2, farm_type)
 

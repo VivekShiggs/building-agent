@@ -77,21 +77,21 @@ def masks_to_geodataframe(
 
     gdf = gpd.GeoDataFrame(all_polys, crs=native_crs)
 
-    gdf_dissolved = gdf.dissolve().explode(index_parts=False).reset_index(drop=True)
-    gdf_dissolved["geometry"] = gdf_dissolved.geometry.buffer(0)
+    gdf["geometry"] = gdf.geometry.buffer(0)
+    gdf = gdf.explode(index_parts=False).reset_index(drop=True)
 
     # Project to UTM for area calculation
     west, south, east, north = (
-        gdf_dissolved.total_bounds[0],
-        gdf_dissolved.total_bounds[1],
-        gdf_dissolved.total_bounds[2],
-        gdf_dissolved.total_bounds[3],
+        gdf.total_bounds[0],
+        gdf.total_bounds[1],
+        gdf.total_bounds[2],
+        gdf.total_bounds[3],
     )
     lon_mid = (west + east) / 2
     lat_mid = (south + north) / 2
     epsg_utm = _get_utm_epsg(lon_mid, lat_mid)
 
-    gdf_utm = gdf_dissolved.to_crs(epsg=epsg_utm)
+    gdf_utm = gdf.to_crs(epsg=epsg_utm)
     gdf_utm["area_m2"] = gdf_utm.geometry.area
 
     gdf_utm = gdf_utm[gdf_utm["area_m2"] >= min_area_m2].copy()

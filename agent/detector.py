@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from PIL import Image as PILImage
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,6 @@ def run_yolo_inference(
             continue
 
         mask_uint8 = (mask * 255).astype(np.uint8)
-        from PIL import Image as PILImage
-
         mask_pil = PILImage.fromarray(mask_uint8).resize(
             (image.shape[1], image.shape[0]),
             PILImage.NEAREST,

@@ -36,6 +36,10 @@ def run_city_audit(
     buildings: List[BuildingRecord],
     store: BuildingStore,
     min_area_m2: float = 50.0,
+    solar_min_m2: float = 500,
+    farm_min_m2: float = 200,
+    sun_hours_kwh: float = 3.8,
+    min_rec_score: float = 0.3,
 ) -> CityKPI:
     """Execute full city audit on a single tile: land use + solar + farming + recommendations.
 
@@ -46,6 +50,10 @@ def run_city_audit(
         buildings: Building records detected in this scan
         store: BuildingStore for saving results
         min_area_m2: Minimum patch area for land use analysis
+        solar_min_m2: Minimum patch area for solar consideration
+        farm_min_m2: Minimum patch area for farming consideration
+        sun_hours_kwh: Average daily solar irradiation kWh/m²
+        min_rec_score: Minimum recommendation score threshold
 
     Returns:
         CityKPI record with all KPIs populated
@@ -54,7 +62,9 @@ def run_city_audit(
 
     # Step 1: Land use classification
     logger.info("Running land use classification...")
-    land_patches, class_area_m2 = analyze_land_use(rgb, geotiff_path, min_area_m2=min_area_m2)
+    land_patches, class_area_m2 = analyze_land_use(
+        rgb, geotiff_path, scan_id=scan_id, min_area_m2=min_area_m2,
+    )
 
     total_area_m2 = sum(class_area_m2.values())
     built_up_m2 = class_area_m2.get(LandUseClass.BUILT_UP.value, 0.0)
@@ -67,11 +77,13 @@ def run_city_audit(
 
     # Step 2: Solar potential
     logger.info("Calculating solar potential...")
-    roof_mw, roof_kwh, roof_co2 = estimate_roof_solar(buildings)
+    roof_mw, roof_kwh, roof_co2 = estimate_roof_solar(buildings, sun_hours=sun_hours_kwh)
 
     # Only bare soil patches for ground-mount solar
     solar_patches = [p for p in land_patches if p.land_use == LandUseClass.BARE_SOIL]
-    land_mw, land_kwh, land_co2 = estimate_open_land_solar(solar_patches, usage_ratio=0.5)
+    land_mw, land_kwh, land_co2 = estimate_open_land_solar(
+        solar_patches, sun_hours=sun_hours_kwh, usage_ratio=0.5,
+    )
 
     total_mw = roof_mw + land_mw
     total_kwh = roof_kwh + land_kwh
@@ -82,7 +94,7 @@ def run_city_audit(
     farm_patches = [p for p in land_patches if p.land_use in (
         LandUseClass.BARE_SOIL, LandUseClass.VEGETATION)]
     farmable_m2 = sum(p.area_m2 for p in farm_patches
-                      if score_patch_for_farming(p) > 0.3)
+                      if score_patch_for_farming(p) > min_rec_score)
     farmable_ha = farmable_m2 / 10000.0
 
     # Estimate yield (mix of community + commercial)
@@ -95,7 +107,12 @@ def run_city_audit(
 
     # Step 4: Generate recommendations
     logger.info("Generating recommendations...")
-    recs = generate_recommendations(buildings, land_patches, scan_id)
+    recs = generate_recommendations(
+        buildings, land_patches, scan_id,
+        solar_min_m2=solar_min_m2,
+        farm_min_m2=farm_min_m2,
+        min_rec_score=min_rec_score,
+    )
 
     # Save recommendations as JSON
     recs_json = json.dumps([r.model_dump() for r in recs])

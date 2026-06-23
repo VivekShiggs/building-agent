@@ -105,6 +105,7 @@ def _find_contiguous_patches(
 def analyze_land_use(
     rgb: np.ndarray,
     geotiff_path: str,
+    scan_id: str = "",
     min_area_m2: float = MIN_PATCH_AREA_M2,
 ) -> Tuple[List[LandPatch], Dict[str, float]]:
     """Run land use analysis on an RGB tile.
@@ -112,6 +113,7 @@ def analyze_land_use(
     Args:
         rgb: (H, W, 3) uint8 array
         geotiff_path: Path to source GeoTIFF for geo-referencing
+        scan_id: Scan ID to associate patches with
         min_area_m2: Minimum patch area in m²
 
     Returns:
@@ -151,7 +153,7 @@ def analyze_land_use(
                 import uuid
                 patch = LandPatch(
                     patch_id=f"p_{uuid.uuid4().hex[:12]}",
-                    scan_id="",
+                    scan_id=scan_id,
                     land_use=lu_class,
                     latitude=centroid.y,
                     longitude=centroid.x,

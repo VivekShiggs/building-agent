@@ -42,7 +42,7 @@ def estimate_roof_solar(
         return (0.0, 0.0, 0.0)
 
     capacity_kw = total_usable_m2 * PANEL_W_PER_M2 / 1000.0
-    annual_kwh = capacity_kw * 1000 * sun_hours * 365 * SYSTEM_EFFICIENCY
+    annual_kwh = capacity_kw * sun_hours * 365 * SYSTEM_EFFICIENCY
     co2_tons = annual_kwh * CO2_PER_KWH
 
     return (capacity_kw / 1000.0, annual_kwh, co2_tons)
@@ -69,7 +69,7 @@ def estimate_open_land_solar(
         return (0.0, 0.0, 0.0)
 
     capacity_kw = total_usable_m2 * PANEL_W_PER_M2 / 1000.0
-    annual_kwh = capacity_kw * 1000 * sun_hours * 365 * SYSTEM_EFFICIENCY
+    annual_kwh = capacity_kw * sun_hours * 365 * SYSTEM_EFFICIENCY
     co2_tons = annual_kwh * CO2_PER_KWH
 
     return (capacity_kw / 1000.0, annual_kwh, co2_tons)

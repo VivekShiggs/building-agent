@@ -108,6 +108,14 @@ class ModelConfig(BaseModel):
     exclude_classes: List[int] = Field(default=[0, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23])
 
 
+class SustainabilityConfig(BaseModel):
+    min_patch_area_m2: float = Field(default=50, ge=1)
+    solar_min_m2: float = Field(default=500, ge=1)
+    farm_min_m2: float = Field(default=200, ge=1)
+    sun_hours_kwh: float = Field(default=3.8, ge=0.1)
+    min_rec_score: float = Field(default=0.3, ge=0, le=1)
+
+
 class AppConfig(BaseModel):
     area: AreaConfig = Field(default_factory=AreaConfig)
     imagery: ImageryConfig = Field(default_factory=ImageryConfig)
@@ -117,6 +125,7 @@ class AppConfig(BaseModel):
     address: AddressConfig = Field(default_factory=AddressConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
+    sustainability: SustainabilityConfig = Field(default_factory=SustainabilityConfig)
 
     @model_validator(mode="after")
     def resolve_paths(self) -> "AppConfig":

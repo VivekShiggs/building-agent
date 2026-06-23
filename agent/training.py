@@ -93,11 +93,11 @@ def export_yolo_labels(
             from PIL import Image
             Image.fromarray(img_data).save(str(img_path))
 
-            # Create label file with polygon coordinates
+            # Create label file with polygon coordinates (YOLO: class_id x1 y1 x2 y2)
             np.savetxt(
                 str(lbl_path),
-                [[0.5, 0.5, 0.9, 0.9]],
-                fmt="%.6f",
+                [[0, 0.5, 0.5, 0.9, 0.9]],
+                fmt="%d %.6f %.6f %.6f %.6f",
                 header="",
                 comments="",
             )

@@ -20,7 +20,7 @@ from agent.models import BuildingRecord, BuildingStatus, CityKPI, Recommendation
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS scans (
     scan_id TEXT PRIMARY KEY,
     bbox TEXT NOT NULL,
+    region_name TEXT,
     started_at TEXT NOT NULL,
     completed_at TEXT,
     n_tiles INTEGER DEFAULT 0,
@@ -140,10 +141,23 @@ class BuildingStore:
 
         cur = conn.execute("SELECT MAX(version) FROM schema_version")
         row = cur.fetchone()
+        current_version = row[0] if row and row[0] else 0
 
-        if row is None or row[0] is None:
+        if current_version == 0:
             conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+        elif current_version < SCHEMA_VERSION:
+            self._migrate_schema(conn, current_version)
+
         conn.commit()
+
+    def _migrate_schema(self, conn: sqlite3.Connection, from_version: int) -> None:
+        """Migrate database schema from an older version."""
+        if from_version < 3:
+            try:
+                conn.execute("ALTER TABLE scans ADD COLUMN region_name TEXT")
+            except sqlite3.OperationalError:
+                pass
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
     def _recover_db(self) -> None:
         """Remove stale journal files to recover from a crash."""
@@ -185,22 +199,32 @@ class BuildingStore:
 
     # ── Scan operations ────────────────────────────────────────────────
 
-    def create_scan(self, bbox: List[float], model_version: str) -> ScanRecord:
-        """Create a new scan record and return it."""
+    def create_scan(self, bbox: List[float], model_version: str, region_name: Optional[str] = None) -> ScanRecord:
+        """Create a new scan record and return it.
+
+        Args:
+            bbox: Bounding box [west, south, east, north]
+            model_version: Model identifier string
+            region_name: Optional city/region name for export filenames
+
+        Returns:
+            ScanRecord
+        """
         scan_id = f"scan_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
         started_at = datetime.now(timezone.utc).isoformat()
 
         conn = self._get_conn()
         conn.execute(
-            """INSERT INTO scans (scan_id, bbox, started_at, model_version, status)
-               VALUES (?, ?, ?, ?, 'in_progress')""",
-            (scan_id, json.dumps(bbox), started_at, model_version),
+            """INSERT INTO scans (scan_id, bbox, region_name, started_at, model_version, status)
+               VALUES (?, ?, ?, ?, ?, 'in_progress')""",
+            (scan_id, json.dumps(bbox), region_name, started_at, model_version),
         )
         conn.commit()
 
         return ScanRecord(
             scan_id=scan_id,
             bbox=bbox,
+            region_name=region_name,
             started_at=started_at,
             model_version=model_version,
         )
@@ -268,7 +292,10 @@ class BuildingStore:
         Returns:
             building_id
         """
-        return self._insert_building(record, scan_id)
+        if not record.building_id:
+            record.building_id = f"bld_{uuid.uuid4().hex[:12]}"
+        self._insert_building(record, scan_id)
+        return record.building_id
 
     def save_buildings(
         self, records: List[BuildingRecord], scan_id: str
@@ -290,9 +317,6 @@ class BuildingStore:
 
     def _insert_building(self, record: BuildingRecord, scan_id: str) -> str:
         """Insert a single building record (no commit)."""
-        if not record.building_id:
-            record.building_id = f"bld_{uuid.uuid4().hex[:12]}"
-
         conn = self._get_conn()
         conn.execute(
             """INSERT OR REPLACE INTO buildings
@@ -438,26 +462,53 @@ class BuildingStore:
     # ── City KPI methods ─────────────────────────────────────────────────
 
     def save_city_kpi(self, kpi: CityKPI) -> None:
-        """Save or update a CityKPI record."""
+        """Save or accumulate a CityKPI record across multiple tiles."""
         conn = self._get_conn()
-        conn.execute(
-            """INSERT OR REPLACE INTO city_kpis
-               (scan_id, total_area_ha, built_up_ha, bare_soil_ha,
-                vegetation_ha, water_ha, unused_land_ha, unused_land_pct,
-                solar_capacity_mw, solar_kwh_year,
-                farmable_ha, farmable_yield_tons,
-                co2_offset_tons, n_recommendations, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                kpi.scan_id, kpi.total_area_ha, kpi.built_up_ha,
-                kpi.bare_soil_ha, kpi.vegetation_ha, kpi.water_ha,
-                kpi.unused_land_ha, kpi.unused_land_pct,
-                kpi.solar_capacity_mw, kpi.solar_kwh_year,
-                kpi.farmable_ha, kpi.farmable_yield_tons,
-                kpi.co2_offset_tons, kpi.n_recommendations,
-                kpi.created_at,
-            ),
-        )
+        existing = self.get_city_kpi(kpi.scan_id)
+        if existing:
+            additive_fields = [
+                "total_area_ha", "built_up_ha", "bare_soil_ha",
+                "vegetation_ha", "water_ha", "unused_land_ha",
+                "solar_capacity_mw", "solar_kwh_year",
+                "farmable_ha", "farmable_yield_tons",
+                "co2_offset_tons", "n_recommendations",
+            ]
+            set_parts: list[str] = []
+            values: list[float] = []
+            for field in additive_fields:
+                set_parts.append(f"{field} = COALESCE({field}, 0) + ?")
+                values.append(getattr(kpi, field, 0) or 0)
+            total_area = (existing.total_area_ha or 0) + (kpi.total_area_ha or 0)
+            unused_land = (existing.unused_land_ha or 0) + (kpi.unused_land_ha or 0)
+            pct = (unused_land / max(total_area, 0.01)) * 100
+            set_parts.append("unused_land_pct = ?")
+            values.append(pct)
+            set_parts.append("created_at = ?")
+            values.append(kpi.created_at)
+            values.append(kpi.scan_id)
+            conn.execute(
+                f"UPDATE city_kpis SET {', '.join(set_parts)} WHERE scan_id = ?",
+                values,
+            )
+        else:
+            conn.execute(
+                """INSERT INTO city_kpis
+                   (scan_id, total_area_ha, built_up_ha, bare_soil_ha,
+                    vegetation_ha, water_ha, unused_land_ha, unused_land_pct,
+                    solar_capacity_mw, solar_kwh_year,
+                    farmable_ha, farmable_yield_tons,
+                    co2_offset_tons, n_recommendations, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    kpi.scan_id, kpi.total_area_ha, kpi.built_up_ha,
+                    kpi.bare_soil_ha, kpi.vegetation_ha, kpi.water_ha,
+                    kpi.unused_land_ha, kpi.unused_land_pct,
+                    kpi.solar_capacity_mw, kpi.solar_kwh_year,
+                    kpi.farmable_ha, kpi.farmable_yield_tons,
+                    kpi.co2_offset_tons, kpi.n_recommendations,
+                    kpi.created_at,
+                ),
+            )
         conn.commit()
 
     def get_city_kpi(self, scan_id: str) -> Optional[CityKPI]:
@@ -476,15 +527,25 @@ class BuildingStore:
         return [CityKPI(**dict(row)) for row in cur.fetchall()]
 
     def save_recommendations(self, recommendations_json: str, scan_id: str) -> None:
-        """Save recommendations JSON for a scan."""
+        """Saved recommendations, appending across multiple tiles."""
         from datetime import datetime, timezone
         conn = self._get_conn()
-        conn.execute(
-            """INSERT OR REPLACE INTO recommendations
-               (scan_id, recommendations_json, created_at)
-               VALUES (?, ?, ?)""",
-            (scan_id, recommendations_json, datetime.now(timezone.utc).isoformat()),
-        )
+        existing = self.get_recommendations(scan_id)
+        if existing:
+            new_recs = json.loads(recommendations_json)
+            merged = existing + new_recs
+            recommendations_json = json.dumps(merged)
+            conn.execute(
+                "UPDATE recommendations SET recommendations_json = ?, created_at = ? WHERE scan_id = ?",
+                (recommendations_json, datetime.now(timezone.utc).isoformat(), scan_id),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO recommendations
+                   (scan_id, recommendations_json, created_at)
+                   VALUES (?, ?, ?)""",
+                (scan_id, recommendations_json, datetime.now(timezone.utc).isoformat()),
+            )
         conn.commit()
 
     def get_recommendations(self, scan_id: str) -> List[dict]:

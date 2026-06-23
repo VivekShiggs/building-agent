@@ -93,8 +93,10 @@ def analyze_color(
 
     try:
         with rasterio.open(geotiff_path) as src:
-            out_image, _ = rasterio.mask.mask(src, [geom], crop=True, all_touched=True)
+            out_image, _ = rasterio.mask.mask(src, [geom], crop=True, all_touched=True, filled=False)
             pixels = out_image[:, :, :].transpose(1, 2, 0)
+            if pixels.size == 0:
+                return (0.0, 0.0, 0.0, "unknown", RoofType.UNKNOWN)
             valid = pixels[..., 0] > 0
 
             if not valid.any():

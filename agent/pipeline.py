@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -73,12 +73,18 @@ class BuildingPipeline:
         self,
         bbox: Optional[List[float]] = None,
         scan_name: Optional[str] = None,
+        region_name: Optional[str] = None,
+        tile_size_deg: Optional[float] = None,
+        progress_callback: Optional[Callable[[str, str, int, int, int], None]] = None,
     ) -> str:
         """Execute a complete scan of the AOI.
 
         Args:
             bbox: Optional override bounding box [west, south, east, north]
             scan_name: Optional scan name for identification
+            region_name: Optional city/region name for export filenames
+            tile_size_deg: Optional override tile size in degrees (default: config value)
+            progress_callback: Optional callback(tile_id, status, n_buildings, done, total)
 
         Returns:
             scan_id
@@ -87,14 +93,14 @@ class BuildingPipeline:
             bbox = self.config.area.bbox_wgs84
 
         model_version = get_model_version(self.config.model)
-        scan = self.store.create_scan(bbox, model_version)
+        scan = self.store.create_scan(bbox, model_version, region_name=region_name)
 
         logger.info(
             "Starting scan %s | bbox=%s | model=%s",
             scan.scan_id, bbox, model_version,
         )
 
-        tiles = self._get_tiles(bbox)
+        tiles = self._get_tiles(bbox, tile_size_deg=tile_size_deg)
         scan = self.store.get_scan(scan.scan_id)
         if scan:
             self.store.update_scan(scan.scan_id, n_tiles=len(tiles))
@@ -129,10 +135,19 @@ class BuildingPipeline:
                     n_unrecorded=total_unrecorded,
                 )
 
+                if progress_callback:
+                    done = sum(1 for t in tiles if t.status == "done")
+                    progress_callback(tile.tile_id, "done", n_buildings, done, len(tiles))
+
             except Exception as e:
                 logger.error("Tile %s failed: %s", tile.tile_id, e, exc_info=True)
                 mark_tile_failed(tiles, tile.tile_id, str(e))
                 save_checkpoint(tiles)
+
+                if progress_callback:
+                    done = sum(1 for t in tiles if t.status == "done")
+                    failed = sum(1 for t in tiles if t.status == "failed")
+                    progress_callback(tile.tile_id, "failed", 0, done + failed, len(tiles))
 
         completed_at = datetime.now(timezone.utc).isoformat()
         n_failed = sum(1 for t in tiles if t.status == "failed")
@@ -184,12 +199,21 @@ class BuildingPipeline:
 
         return new_scan_id
 
-    def _get_tiles(self, bbox: List[float]):
-        """Get or create tile grid for the given bbox."""
+    def _get_tiles(self, bbox: List[float], tile_size_deg: Optional[float] = None):
+        """Get or create tile grid for the given bbox.
+
+        Args:
+            bbox: [west, south, east, north]
+            tile_size_deg: Override tile size (default: config value)
+
+        Returns:
+            List of TileState
+        """
         existing = load_checkpoint()
         if existing and self._checkpoint_matches_bbox(existing, bbox):
             return existing
-        return generate_tiles(bbox, self.config.area.tile_size_deg)
+        tile_size = tile_size_deg if tile_size_deg is not None else self.config.area.tile_size_deg
+        return generate_tiles(bbox, tile_size)
 
     @staticmethod
     def _checkpoint_matches_bbox(tiles, bbox: List[float]) -> bool:
@@ -257,12 +281,15 @@ class BuildingPipeline:
         try:
             from agent.city_audit import run_city_audit
 
-            audit_config = self.config.sustainability if hasattr(self.config, "sustainability") else None
-            min_area = (audit_config.min_patch_area_m2
-                        if audit_config else 50.0)
+            sust = self.config.sustainability
             run_city_audit(
                 rgb, geotiff_path, scan_id, records,
-                self.store, min_area_m2=min_area,
+                self.store,
+                min_area_m2=sust.min_patch_area_m2,
+                solar_min_m2=sust.solar_min_m2,
+                farm_min_m2=sust.farm_min_m2,
+                sun_hours_kwh=sust.sun_hours_kwh,
+                min_rec_score=sust.min_rec_score,
             )
         except Exception as e:
             logger.warning("City audit failed for tile %s: %s", tile.tile_id, e)
@@ -577,8 +604,12 @@ class BuildingPipeline:
         export_dir = Path(self.config.storage.export_dir)
         export_dir.mkdir(parents=True, exist_ok=True)
 
-        excel_path = str(export_dir / f"buildings_{scan_id}.xlsx")
-        geojson_path = str(export_dir / f"buildings_{scan_id}.geojson")
+        scan = self.store.get_scan(scan_id)
+        region = scan.region_name if scan and scan.region_name else ""
+        prefix = f"{region}_" if region else ""
+
+        excel_path = str(export_dir / f"{prefix}{scan_id}_buildings.xlsx")
+        geojson_path = str(export_dir / f"{prefix}{scan_id}_buildings.geojson")
 
         try:
             export_excel(self.store, excel_path, scan_id)
