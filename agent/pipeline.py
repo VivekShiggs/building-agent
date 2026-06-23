@@ -253,6 +253,20 @@ class BuildingPipeline:
         # Step 7: Store results
         self.store.save_buildings(records, scan_id)
 
+        # Step 8: City audit (land use, solar, farming, recommendations)
+        try:
+            from agent.city_audit import run_city_audit
+
+            audit_config = self.config.sustainability if hasattr(self.config, "sustainability") else None
+            min_area = (audit_config.min_patch_area_m2
+                        if audit_config else 50.0)
+            run_city_audit(
+                rgb, geotiff_path, scan_id, records,
+                self.store, min_area_m2=min_area,
+            )
+        except Exception as e:
+            logger.warning("City audit failed for tile %s: %s", tile.tile_id, e)
+
         n_unrecorded = sum(1 for r in records if r.is_unrecorded)
         return (len(records), n_unrecorded)
 

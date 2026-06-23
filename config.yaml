@@ -67,3 +67,15 @@ storage:
 schedule:
   # Re-scan interval in days (null = one-time scan only)
   rescan_interval_days: null
+
+sustainability:
+  # Minimum patch area (m²) for land use analysis
+  min_patch_area_m2: 50
+  # Minimum area (m²) for solar farm consideration
+  solar_min_m2: 500
+  # Minimum area (m²) for farming consideration
+  farm_min_m2: 200
+  # Average daily solar irradiation (kWh/m²)
+  sun_hours_kwh: 3.8
+  # Minimum recommendation score threshold (0-1)
+  min_rec_score: 0.3

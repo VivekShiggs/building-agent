@@ -79,12 +79,12 @@ def run_scan(bbox: List[float]) -> str:
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────
-st.sidebar.title("🏗️ Building Agent")
-st.sidebar.markdown("AI-powered building detection & data collection")
+st.sidebar.title("🏙️ City Audit AI")
+st.sidebar.markdown("Sustainable city analytics — detect, classify, recommend")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Dashboard", "Scan", "Results", "Review", "Train", "Export"],
+    ["Dashboard", "City Audit", "Scan", "Results", "Review", "Train", "Export"],
     index=0,
 )
 st.session_state.page = page
@@ -142,6 +142,91 @@ if page == "Dashboard":
         "Run a scan from the **Scan** tab to start collecting building data. "
         "Use the self-improvement loop in the **Train** tab to fine-tune the "
         "detection model with your collected data."
+    )
+
+# ── City Audit Tab ────────────────────────────────────────────────────
+elif page == "City Audit":
+    st.title("🏙️ Sustainable City Audit")
+    st.markdown("""
+    Government KPIs and actionable recommendations from your scan data.
+    Run a scan first from the **Scan** tab.
+    """)
+
+    kpis = st.session_state.store.get_all_city_kpis()
+    if not kpis:
+        st.info("No audit data yet. Run a scan from the **Scan** tab to generate city KPIs.")
+        st.stop()
+
+    selected = st.selectbox(
+        "Select scan",
+        [f"{k.scan_id[:25]}... ({k.created_at[:19]})" for k in kpis],
+    )
+    idx = [f"{k.scan_id[:25]}... ({k.created_at[:19]})" for k in kpis].index(selected)
+    kpi = kpis[idx]
+
+    # KPI cards
+    st.subheader("📊 City KPIs")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Total Area", f"{kpi.total_area_ha:.1f} ha")
+    with c2:
+        st.metric("Built-up", f"{kpi.built_up_ha:.1f} ha", f"{kpi.built_up_ha / max(kpi.total_area_ha, 0.01) * 100:.0f}%")
+    with c3:
+        st.metric("Unused Land", f"{kpi.unused_land_ha:.1f} ha", f"{kpi.unused_land_pct:.1f}%")
+    with c4:
+        st.metric("Vegetation", f"{kpi.vegetation_ha:.1f} ha")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("☀️ Solar Capacity", f"{kpi.solar_capacity_mw:.2f} MW")
+    with c2:
+        st.metric("🌱 Farmable Land", f"{kpi.farmable_ha:.1f} ha")
+    with c3:
+        st.metric("🌿 CO₂ Offset", f"{kpi.co2_offset_tons:.1f} t/yr")
+
+    # Land use breakdown
+    st.subheader("🧱 Land Use Breakdown")
+    land_data = pd.DataFrame([
+        {"Class": "Built-up", "ha": kpi.built_up_ha},
+        {"Class": "Vegetation", "ha": kpi.vegetation_ha},
+        {"Class": "Bare Soil", "ha": kpi.bare_soil_ha},
+        {"Class": "Water", "ha": kpi.water_ha},
+    ])
+    st.bar_chart(land_data.set_index("Class"))
+
+    # Recommendations
+    st.subheader("💡 Recommendations")
+    recs = st.session_state.store.get_recommendations(kpi.scan_id)
+
+    if not recs:
+        st.info("No recommendations generated for this scan.")
+    else:
+        for r in recs:
+            prio = r.get("priority", "medium")
+            icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(prio, "⚪")
+            with st.expander(f"{icon} **{r['title']}** (score: {r['score']:.2f})"):
+                st.write(r["description"])
+                cols = st.columns(3)
+                if r.get("estimated_kwh_year"):
+                    cols[0].metric("Annual kWh", f"{r['estimated_kwh_year']:,.0f}")
+                if r.get("estimated_co2_tons"):
+                    cols[1].metric("CO₂ Offset", f"{r['estimated_co2_tons']:.1f} t/yr")
+                if r.get("estimated_yield_tons"):
+                    cols[2].metric("Crop Yield", f"{r['estimated_yield_tons']:.1f} t/yr")
+
+    # Solar deep-dive
+    st.subheader("☀️ Solar Potential Detail")
+    st.markdown(f"""
+    - **Rooftop + ground-mount solar capacity**: {kpi.solar_capacity_mw:.2f} MW
+    - **Estimated annual generation**: {kpi.solar_kwh_year:,.0f} kWh
+    - **CO₂ offset**: {kpi.co2_offset_tons:.1f} tons/year
+    """)
+    st.caption(
+        "Based on {:.0f} buildings (40% usable roof area) and {:.1f} ha bare soil (50% panel coverage). "
+        "Trnava avg: 3.8 kWh/m²/day.".format(
+            len(st.session_state.store.get_buildings_by_scan(kpi.scan_id)) if kpi.scan_id else 0,
+            kpi.bare_soil_ha,
+        )
     )
 
 # ── Scan Tab ──────────────────────────────────────────────────────────

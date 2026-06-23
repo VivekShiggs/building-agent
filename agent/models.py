@@ -1,4 +1,4 @@
-"""Pydantic data models for building detection results.
+"""Pydantic data models for building detection and city audit results.
 
 All data models use strict validation to prevent injection and type errors.
 """
@@ -155,3 +155,86 @@ class ScanRecord(BaseModel):
     n_unrecorded: int = 0
     model_version: str = "yolov8n-seg"
     status: str = "in_progress"
+
+
+# ── Sustainable City AI — Phase 1 models ─────────────────────────
+
+
+class LandUseClass(str, Enum):
+    """Land use classification for a detected patch."""
+
+    BUILT_UP = "built_up"
+    BARE_SOIL = "bare_soil"
+    VEGETATION = "vegetation"
+    WATER = "water"
+    UNKNOWN = "unknown"
+
+
+class RecommendationPriority(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class RecommendationType(str, Enum):
+    SOLAR_FARM = "solar_farm"
+    ROOFTOP_SOLAR = "rooftop_solar"
+    COMMUNITY_FARM = "community_farm"
+    COMMERCIAL_FARM = "commercial_farm"
+    PARK = "park"
+    UNUSED_LAND = "unused_land"
+
+
+class LandPatch(BaseModel):
+    """A contiguous patch of land with use classification and suitability scores."""
+
+    patch_id: str = Field(description="Unique patch identifier")
+    scan_id: str = Field(description="Associated scan ID")
+    land_use: LandUseClass = Field(default=LandUseClass.UNKNOWN)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    area_m2: float = Field(ge=0, description="Area in square meters")
+    compactness: float = Field(default=0.0, ge=0, le=1)
+    solar_score: float = Field(default=0.0, ge=0, le=1, description="0-1 suitability for solar")
+    farm_score: float = Field(default=0.0, ge=0, le=1, description="0-1 suitability for farming")
+    road_distance_m: Optional[float] = Field(default=None)
+    geometry_geojson: Optional[str] = Field(default=None)
+
+
+class Recommendation(BaseModel):
+    """An actionable recommendation for city planners."""
+
+    recommendation_id: str = Field(description="Unique ID")
+    scan_id: str = Field(description="Associated scan ID")
+    rec_type: RecommendationType = Field(...)
+    priority: RecommendationPriority = Field(default=RecommendationPriority.MEDIUM)
+    title: str = Field(description="Short human-readable title")
+    description: str = Field(description="Detailed explanation")
+    latitude: float = Field(...)
+    longitude: float = Field(...)
+    area_m2: float = Field(ge=0, description="Recommended area in m²")
+    estimated_kwh_year: Optional[float] = Field(default=None, description="Solar: annual kWh")
+    estimated_co2_tons: Optional[float] = Field(default=None, description="CO₂ offset in tons/yr")
+    estimated_yield_tons: Optional[float] = Field(default=None, description="Farming: crop tons/yr")
+    geometry_geojson: Optional[str] = Field(default=None)
+    score: float = Field(default=0.0, ge=0, le=1, description="Overall recommendation score")
+
+
+class CityKPI(BaseModel):
+    """Aggregated city-level key performance indicators from a scan."""
+
+    scan_id: str = Field(description="Associated scan ID")
+    total_area_ha: float = Field(ge=0, description="Total scanned area in hectares")
+    built_up_ha: float = Field(ge=0, description="Built-up / building area in hectares")
+    bare_soil_ha: float = Field(ge=0, description="Bare soil area in hectares")
+    vegetation_ha: float = Field(ge=0, description="Vegetation area in hectares")
+    water_ha: float = Field(ge=0, description="Water area in hectares")
+    unused_land_ha: float = Field(ge=0, description="Vacant / unused land area")
+    unused_land_pct: float = Field(ge=0, le=100, description="Unused land as % of total")
+    solar_capacity_mw: float = Field(ge=0, description="Estimated rooftop solar potential in MW")
+    solar_kwh_year: float = Field(ge=0, description="Estimated annual solar generation in kWh")
+    farmable_ha: float = Field(ge=0, description="Land suitable for farming in hectares")
+    farmable_yield_tons: float = Field(ge=0, description="Estimated annual crop yield in tons")
+    co2_offset_tons: float = Field(ge=0, description="CO₂ offset from solar in tons/yr")
+    n_recommendations: int = Field(default=0, description="Number of recommendations generated")
+    created_at: str = Field(description="ISO 8601 timestamp")

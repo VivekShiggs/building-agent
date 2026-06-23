@@ -16,11 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.models import BuildingRecord, BuildingStatus, ScanRecord, TileState
+from agent.models import BuildingRecord, BuildingStatus, CityKPI, Recommendation, ScanRecord, TileState
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -84,6 +84,34 @@ CREATE INDEX IF NOT EXISTS idx_buildings_scan ON buildings(scan_id);
 CREATE INDEX IF NOT EXISTS idx_buildings_location ON buildings(latitude, longitude);
 CREATE INDEX IF NOT EXISTS idx_buildings_tile ON buildings(tile_id);
 CREATE INDEX IF NOT EXISTS idx_buildings_status ON buildings(status);
+
+CREATE TABLE IF NOT EXISTS city_kpis (
+    scan_id TEXT PRIMARY KEY,
+    total_area_ha REAL DEFAULT 0,
+    built_up_ha REAL DEFAULT 0,
+    bare_soil_ha REAL DEFAULT 0,
+    vegetation_ha REAL DEFAULT 0,
+    water_ha REAL DEFAULT 0,
+    unused_land_ha REAL DEFAULT 0,
+    unused_land_pct REAL DEFAULT 0,
+    solar_capacity_mw REAL DEFAULT 0,
+    solar_kwh_year REAL DEFAULT 0,
+    farmable_ha REAL DEFAULT 0,
+    farmable_yield_tons REAL DEFAULT 0,
+    co2_offset_tons REAL DEFAULT 0,
+    n_recommendations INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (scan_id) REFERENCES scans(scan_id)
+);
+
+CREATE TABLE IF NOT EXISTS recommendations (
+    scan_id TEXT PRIMARY KEY,
+    recommendations_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (scan_id) REFERENCES scans(scan_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kpis_scan ON city_kpis(scan_id);
 """
 
 
@@ -406,6 +434,71 @@ class BuildingStore:
             df = pd.read_sql_query("SELECT * FROM buildings", conn)
 
         return df
+
+    # ── City KPI methods ─────────────────────────────────────────────────
+
+    def save_city_kpi(self, kpi: CityKPI) -> None:
+        """Save or update a CityKPI record."""
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT OR REPLACE INTO city_kpis
+               (scan_id, total_area_ha, built_up_ha, bare_soil_ha,
+                vegetation_ha, water_ha, unused_land_ha, unused_land_pct,
+                solar_capacity_mw, solar_kwh_year,
+                farmable_ha, farmable_yield_tons,
+                co2_offset_tons, n_recommendations, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                kpi.scan_id, kpi.total_area_ha, kpi.built_up_ha,
+                kpi.bare_soil_ha, kpi.vegetation_ha, kpi.water_ha,
+                kpi.unused_land_ha, kpi.unused_land_pct,
+                kpi.solar_capacity_mw, kpi.solar_kwh_year,
+                kpi.farmable_ha, kpi.farmable_yield_tons,
+                kpi.co2_offset_tons, kpi.n_recommendations,
+                kpi.created_at,
+            ),
+        )
+        conn.commit()
+
+    def get_city_kpi(self, scan_id: str) -> Optional[CityKPI]:
+        """Get CityKPI for a specific scan."""
+        conn = self._get_conn()
+        cur = conn.execute("SELECT * FROM city_kpis WHERE scan_id = ?", (scan_id,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return CityKPI(**dict(row))
+
+    def get_all_city_kpis(self) -> List[CityKPI]:
+        """Get all CityKPI records, newest first."""
+        conn = self._get_conn()
+        cur = conn.execute("SELECT * FROM city_kpis ORDER BY created_at DESC")
+        return [CityKPI(**dict(row)) for row in cur.fetchall()]
+
+    def save_recommendations(self, recommendations_json: str, scan_id: str) -> None:
+        """Save recommendations JSON for a scan."""
+        from datetime import datetime, timezone
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT OR REPLACE INTO recommendations
+               (scan_id, recommendations_json, created_at)
+               VALUES (?, ?, ?)""",
+            (scan_id, recommendations_json, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+    def get_recommendations(self, scan_id: str) -> List[dict]:
+        """Get recommendations for a scan as a list of dicts."""
+        import json
+        conn = self._get_conn()
+        cur = conn.execute(
+            "SELECT recommendations_json FROM recommendations WHERE scan_id = ?",
+            (scan_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return []
+        return json.loads(row["recommendations_json"])
 
     # ── Internal helpers ────────────────────────────────────────────────
 
