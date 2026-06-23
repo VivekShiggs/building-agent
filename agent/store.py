@@ -463,103 +463,129 @@ class BuildingStore:
 
     def save_city_kpi(self, kpi: CityKPI) -> None:
         """Save or accumulate a CityKPI record across multiple tiles."""
-        conn = self._get_conn()
-        existing = self.get_city_kpi(kpi.scan_id)
-        if existing:
-            additive_fields = [
-                "total_area_ha", "built_up_ha", "bare_soil_ha",
-                "vegetation_ha", "water_ha", "unused_land_ha",
-                "solar_capacity_mw", "solar_kwh_year",
-                "farmable_ha", "farmable_yield_tons",
-                "co2_offset_tons", "n_recommendations",
-            ]
-            set_parts: list[str] = []
-            values: list[float] = []
-            for field in additive_fields:
-                set_parts.append(f"{field} = COALESCE({field}, 0) + ?")
-                values.append(getattr(kpi, field, 0) or 0)
-            total_area = (existing.total_area_ha or 0) + (kpi.total_area_ha or 0)
-            unused_land = (existing.unused_land_ha or 0) + (kpi.unused_land_ha or 0)
-            pct = (unused_land / max(total_area, 0.01)) * 100
-            set_parts.append("unused_land_pct = ?")
-            values.append(pct)
-            set_parts.append("created_at = ?")
-            values.append(kpi.created_at)
-            values.append(kpi.scan_id)
-            conn.execute(
-                f"UPDATE city_kpis SET {', '.join(set_parts)} WHERE scan_id = ?",
-                values,
-            )
-        else:
-            conn.execute(
-                """INSERT INTO city_kpis
-                   (scan_id, total_area_ha, built_up_ha, bare_soil_ha,
-                    vegetation_ha, water_ha, unused_land_ha, unused_land_pct,
-                    solar_capacity_mw, solar_kwh_year,
-                    farmable_ha, farmable_yield_tons,
-                    co2_offset_tons, n_recommendations, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    kpi.scan_id, kpi.total_area_ha, kpi.built_up_ha,
-                    kpi.bare_soil_ha, kpi.vegetation_ha, kpi.water_ha,
-                    kpi.unused_land_ha, kpi.unused_land_pct,
-                    kpi.solar_capacity_mw, kpi.solar_kwh_year,
-                    kpi.farmable_ha, kpi.farmable_yield_tons,
-                    kpi.co2_offset_tons, kpi.n_recommendations,
-                    kpi.created_at,
-                ),
-            )
-        conn.commit()
+        try:
+            conn = self._get_conn()
+            existing = self.get_city_kpi(kpi.scan_id)
+            if existing:
+                additive_fields = [
+                    "total_area_ha", "built_up_ha", "bare_soil_ha",
+                    "vegetation_ha", "water_ha", "unused_land_ha",
+                    "solar_capacity_mw", "solar_kwh_year",
+                    "farmable_ha", "farmable_yield_tons",
+                    "co2_offset_tons", "n_recommendations",
+                ]
+                set_parts: list[str] = []
+                values: list[float] = []
+                for field in additive_fields:
+                    set_parts.append(f"{field} = COALESCE({field}, 0) + ?")
+                    values.append(getattr(kpi, field, 0) or 0)
+                total_area = (existing.total_area_ha or 0) + (kpi.total_area_ha or 0)
+                unused_land = (existing.unused_land_ha or 0) + (kpi.unused_land_ha or 0)
+                pct = (unused_land / max(total_area, 0.01)) * 100
+                set_parts.append("unused_land_pct = ?")
+                values.append(pct)
+                set_parts.append("created_at = ?")
+                values.append(kpi.created_at)
+                values.append(kpi.scan_id)
+                conn.execute(
+                    f"UPDATE city_kpis SET {', '.join(set_parts)} WHERE scan_id = ?",
+                    values,
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO city_kpis
+                       (scan_id, total_area_ha, built_up_ha, bare_soil_ha,
+                        vegetation_ha, water_ha, unused_land_ha, unused_land_pct,
+                        solar_capacity_mw, solar_kwh_year,
+                        farmable_ha, farmable_yield_tons,
+                        co2_offset_tons, n_recommendations, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        kpi.scan_id, kpi.total_area_ha, kpi.built_up_ha,
+                        kpi.bare_soil_ha, kpi.vegetation_ha, kpi.water_ha,
+                        kpi.unused_land_ha, kpi.unused_land_pct,
+                        kpi.solar_capacity_mw, kpi.solar_kwh_year,
+                        kpi.farmable_ha, kpi.farmable_yield_tons,
+                        kpi.co2_offset_tons, kpi.n_recommendations,
+                        kpi.created_at,
+                    ),
+                )
+            conn.commit()
+        except Exception as e:
+            logger.error("save_city_kpi failed: %s", e)
+
+    def _row_to_kpi(self, row: sqlite3.Row) -> Optional[CityKPI]:
+        """Safely convert a DB row to CityKPI, returning None on schema mismatch."""
+        try:
+            d = dict(row)
+            return CityKPI(**d)
+        except Exception as e:
+            logger.warning("Failed to parse CityKPI row: %s", e)
+            return None
 
     def get_city_kpi(self, scan_id: str) -> Optional[CityKPI]:
         """Get CityKPI for a specific scan."""
-        conn = self._get_conn()
-        cur = conn.execute("SELECT * FROM city_kpis WHERE scan_id = ?", (scan_id,))
-        row = cur.fetchone()
-        if row is None:
+        try:
+            conn = self._get_conn()
+            cur = conn.execute("SELECT * FROM city_kpis WHERE scan_id = ?", (scan_id,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return self._row_to_kpi(row)
+        except Exception as e:
+            logger.warning("get_city_kpi failed: %s", e)
             return None
-        return CityKPI(**dict(row))
 
     def get_all_city_kpis(self) -> List[CityKPI]:
         """Get all CityKPI records, newest first."""
-        conn = self._get_conn()
-        cur = conn.execute("SELECT * FROM city_kpis ORDER BY created_at DESC")
-        return [CityKPI(**dict(row)) for row in cur.fetchall()]
+        try:
+            conn = self._get_conn()
+            cur = conn.execute("SELECT * FROM city_kpis ORDER BY created_at DESC")
+            return [kpi for row in cur.fetchall() if (kpi := self._row_to_kpi(row))]
+        except Exception as e:
+            logger.warning("get_all_city_kpis failed: %s", e)
+            return []
 
     def save_recommendations(self, recommendations_json: str, scan_id: str) -> None:
         """Saved recommendations, appending across multiple tiles."""
-        from datetime import datetime, timezone
-        conn = self._get_conn()
-        existing = self.get_recommendations(scan_id)
-        if existing:
-            new_recs = json.loads(recommendations_json)
-            merged = existing + new_recs
-            recommendations_json = json.dumps(merged)
-            conn.execute(
-                "UPDATE recommendations SET recommendations_json = ?, created_at = ? WHERE scan_id = ?",
-                (recommendations_json, datetime.now(timezone.utc).isoformat(), scan_id),
-            )
-        else:
-            conn.execute(
-                """INSERT INTO recommendations
-                   (scan_id, recommendations_json, created_at)
-                   VALUES (?, ?, ?)""",
-                (scan_id, recommendations_json, datetime.now(timezone.utc).isoformat()),
-            )
-        conn.commit()
+        try:
+            from datetime import datetime, timezone
+            conn = self._get_conn()
+            existing = self.get_recommendations(scan_id)
+            if existing:
+                new_recs = json.loads(recommendations_json)
+                merged = existing + new_recs
+                recommendations_json = json.dumps(merged)
+                conn.execute(
+                    "UPDATE recommendations SET recommendations_json = ?, created_at = ? WHERE scan_id = ?",
+                    (recommendations_json, datetime.now(timezone.utc).isoformat(), scan_id),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO recommendations
+                       (scan_id, recommendations_json, created_at)
+                       VALUES (?, ?, ?)""",
+                    (scan_id, recommendations_json, datetime.now(timezone.utc).isoformat()),
+                )
+            conn.commit()
+        except Exception as e:
+            logger.error("save_recommendations failed: %s", e)
 
     def get_recommendations(self, scan_id: str) -> List[dict]:
         """Get recommendations for a scan as a list of dicts."""
-        import json
-        conn = self._get_conn()
-        cur = conn.execute(
-            "SELECT recommendations_json FROM recommendations WHERE scan_id = ?",
-            (scan_id,),
-        )
-        row = cur.fetchone()
-        if row is None:
+        try:
+            conn = self._get_conn()
+            cur = conn.execute(
+                "SELECT recommendations_json FROM recommendations WHERE scan_id = ?",
+                (scan_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return []
+            return json.loads(row["recommendations_json"])
+        except Exception as e:
+            logger.warning("get_recommendations failed: %s", e)
             return []
-        return json.loads(row["recommendations_json"])
 
     # ── Internal helpers ────────────────────────────────────────────────
 
